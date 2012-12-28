@@ -43,7 +43,7 @@ class VOBuilder
     
     public function getClassName()
     {
-        $className = strtolower( $this->tableReflection->name );
+        $className = strtolower( $this->tableReflection->schema . ' ' . $this->tableReflection->name );
         
         $className = str_ireplace( array( '_', '-' ), ' ', $className );
         

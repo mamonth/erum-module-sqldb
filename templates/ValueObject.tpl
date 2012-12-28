@@ -14,7 +14,7 @@ if( $this->namespace )
  */
 class <?php echo $this->getClassName(); ?> extends \Erum\ModelAbstract
 {
-    const table = '<?php echo $this->tableReflection->name ?>';
+    const table = '<?php echo ( $this->tableReflection->schema ? $this->tableReflection->schema . '.' : '' ) , $this->tableReflection->name ?>';
 
     <?php
     /* @var $column \Sql\Reflection\Column */
