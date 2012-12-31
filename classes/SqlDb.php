@@ -38,4 +38,13 @@ class SqlDb extends \Erum\ModuleAbstract
     {
         return \strtotime( $sqlTime );
     }
+
+    /**
+     * here extends PDO methods - to avoid __call
+     */
+
+    public function prepare( $statement ,array $driver_options = array() )
+    {
+        return $this->driver->prepare( $statement, $driver_options );
+    }
 }
