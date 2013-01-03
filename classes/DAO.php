@@ -48,6 +48,12 @@ abstract class DAO extends \Erum\DAOAbstract
             $stmt->execute();
 
             $model = $stmt->fetchObject( $className );
+
+            // normalize property values
+            foreach( $model->tableReflection()->columns as $column )
+            {
+                $model->{$column->name} = self::castFromSql( $model->{$column->name}, $column->datatype );
+            }
         }
         
         if( $model instanceof $className )
@@ -77,7 +83,9 @@ abstract class DAO extends \Erum\DAOAbstract
 //            //$condition->from( $table );
 //        }
 
-        $query = 'SELECT ' . self::getModelTable() . '.* FROM ' . self::getModelTable() . ($condition ? ' ' . $condition : '');
+        $className = self::getModelClass( true );
+
+        $query = 'SELECT ' . self::getModelTable( $className ) . '.* FROM ' . self::getModelTable( $className ) . ( $condition ? ' ' . $condition : '');
 
         $stmt = \SqlDb::factory()->prepare( $query );
         
@@ -85,15 +93,21 @@ abstract class DAO extends \Erum\DAOAbstract
 
         $list = array( );
 
-        while ( $model = $stmt->fetchObject( self::getModelClass( true ) ) )
+        while ( $model = $stmt->fetchObject( $className ) )
         {
             $list[ implode( ':', (array)$model->id ) ] = $model;
-            
-            $oldModel = \Erum\ModelWatcher::instance()->get( self::getModelClass( true ), $model->id );
-            
-            if( $model )
+
+            // normalize property values
+            foreach( $model->tableReflection()->columns as $column )
             {
-                unset( $model );
+                $model->{$column->name} = self::castFromSql( $model->{$column->name}, $column->datatype );
+            }
+
+            $oldModel = \Erum\ModelWatcher::instance()->get( $className, $model->id );
+            
+            if( $oldModel )
+            {
+                unset( $oldModel );
             }
             else
             {
@@ -166,6 +180,12 @@ abstract class DAO extends \Erum\DAOAbstract
             $list[ implode( ':', (array)$model->id ) ] = $model;
             
             \Erum\ModelWatcher::instance()->bind( $model );
+
+            // normalize property values
+            foreach( $model->tableReflection()->columns as $column )
+            {
+                $model->{$column->name} = self::castFromSql( $model->{$column->name}, $column->datatype );
+            }
         }
         
         return $list;
@@ -199,7 +219,117 @@ abstract class DAO extends \Erum\DAOAbstract
 
         return $stmt->rowCount() ? true : false;
     }
-    
+
+    public static function save( \Erum\ModelAbstract $model )
+    {
+        if( self::isNew( $model ) )
+        {
+            self::insert( $model );
+        }
+        else
+        {
+            self::update( $model );
+        }
+    }
+
+    public static function insert( \Erum\ModelAbstract $model )
+    {
+        $columnNames    = array();
+        $columnValues   = array();
+        $modelClass     = \get_class( $model );
+
+        foreach( $model->tableReflection()->columns as $column )
+        {
+            /* @var $column \Sql\Reflection\Column */
+
+            // skip serial
+            if( $column->datatype == 'SERIAL' ) continue;
+
+            $columnNames[] = $column->name;
+            $columnValues[ ':' . $column->name ] = $model->{$column->name} !== '' ? $model->{$column->name} : NULL;
+        };
+
+        $sql = 'INSERT INTO ' . self::getModelTable( $modelClass )
+            . '(' . \implode( ',', $columnNames )
+            . ') VALUES (' . \implode( ',', array_keys( $columnValues ) )
+            . ') RETURNING ' . \implode( ',', (array)$modelClass::identityProperty() ) . ';';
+
+        $stmt = \SqlDb::factory()->prepare( $sql );
+
+        $stmt->execute( $columnValues );
+
+        $result = $stmt->fetch( \PDO::FETCH_ASSOC );
+
+        foreach( $result as $column => $value )
+        {
+            $model->$column = $value;
+        }
+
+        return true;
+    }
+
+    public static function update( \Erum\ModelAbstract $model )
+    {
+        $columnSets     = array();
+        $columnValues   = array();
+        $modelClass     = \get_class( $model );
+        $keyConditions  = array();
+
+        foreach( (array)$modelClass::identityProperty() as $column )
+        {
+            $keyConditions[ $column ] = $column . ' = :' . $column;
+        }
+
+        foreach( $model->tableReflection()->columns as $column )
+        {
+            /* @var $column \Sql\Reflection\Column */
+
+            if( !isset( $keyConditions[ $column->name ] ) )
+            {
+                $columnSets[] = $column->name . ' = ' . ':' . $column->name;
+            }
+
+            $columnValues[ ':' . $column->name ] = $model->{$column->name};
+        }
+
+        $sql = 'UPDATE ' . self::getModelTable( $modelClass )
+            . ' SET ' . \implode( ',', $columnSets )
+            . ' WHERE ' . \implode( ' AND ', $keyConditions );
+
+        $stmt = \SqlDb::factory()->prepare( $sql );
+
+        $stmt->execute( $columnValues );
+    }
+
+    /**
+     * Find out - is model new (need insert) or existed (need update)
+     *
+     * @param \Erum\ModelAbstract $model
+     * @return bool
+     */
+    public static function isNew( \Erum\ModelAbstract $model )
+    {
+        if( $model->getId() )
+        {
+            $properties = (array)$model->identityProperty();
+
+            if( sizeof( $properties ) > 1 )
+            {
+                foreach( $properties as $property )
+                {
+                    if( null === $model->__get( $property ) )
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
     /**
      * Get's model table
      * 
@@ -226,6 +356,69 @@ abstract class DAO extends \Erum\DAOAbstract
         }
 
         return $table;
+    }
+
+    public static function castToSql( $value, $columnType = 'VARCHAR' )
+    {
+        if( null === $value ) return null;
+
+        // prepare arrays
+        if( ']' == substr( $columnType, 1, -1 ) )
+        {
+
+        }
+
+        switch( $columnType )
+        {
+            case 'INT' || 'SMALLINT' || 'BIGINT':
+                $value = (int)$value;
+                break;
+            case 'ARRAY':
+                break;
+        }
+
+        return $value;
+    }
+
+    public static function castFromSql( $value, $columnType = 'VARCHAR' )
+    {
+        if( null === $value ) return null;
+
+        // prepare arrays
+        if( ']' == substr( $columnType, -1, 1 ) )
+        {
+            $columnType = 'ARRAY';
+        }
+
+        switch( $columnType )
+        {
+            case 'INT':
+            case 'SMALLINT':
+            case 'BIGINT':
+            case 'INTEGER':
+            case 'SERIAL':
+                $value = (int)$value;
+                break;
+            case 'BOOLEAN':
+            case 'BOOL':
+                $value = (bool)$value;
+                break;
+            case 'ARRAY':
+                // cover strings into "
+                $value = str_ireplace( '"', '\"', $value );
+
+                $value = preg_replace( '/([^{},]+)/i', '"$1"', $value );
+
+                $value = json_decode( str_replace(
+                    array( '[',      ']',      '{', '}' ),
+                    array( '\u005B', '\u005D', '[', ']' ),
+                    $value
+                ) );
+                break;
+            default:
+        }
+
+        return $value;
     }
     
 }
