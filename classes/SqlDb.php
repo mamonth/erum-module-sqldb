@@ -1,7 +1,7 @@
 <?php
 
 /**
- * Description of SqlDb
+ * SQL database module for Erum framework
  *
  * @author Andrew Tereshko <andrew.tereshko@gmail.com>
  */
@@ -41,6 +41,7 @@ class SqlDb extends \Erum\ModuleAbstract
 
     /**
      * here extends PDO methods - to avoid __call
+     * @todo - realize moduleInterface to avoid crunches
      */
 
     public function prepare( $statement ,array $driver_options = array() )
