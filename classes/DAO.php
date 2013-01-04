@@ -246,13 +246,16 @@ abstract class DAO extends \Erum\DAOAbstract
             if( $column->datatype == 'SERIAL' ) continue;
 
             $columnNames[] = $column->name;
-            $columnValues[ ':' . $column->name ] = $model->{$column->name} !== '' ? $model->{$column->name} : NULL;
+
+            $columnValues[ ':' . $column->name ] = self::castToSql( $model->{$column->name}, $column->datatype );
         };
 
         $sql = 'INSERT INTO ' . self::getModelTable( $modelClass )
             . '(' . \implode( ',', $columnNames )
             . ') VALUES (' . \implode( ',', array_keys( $columnValues ) )
             . ') RETURNING ' . \implode( ',', (array)$modelClass::identityProperty() ) . ';';
+
+        echo $sql;
 
         $stmt = \SqlDb::factory()->prepare( $sql );
 
@@ -289,7 +292,7 @@ abstract class DAO extends \Erum\DAOAbstract
                 $columnSets[] = $column->name . ' = ' . ':' . $column->name;
             }
 
-            $columnValues[ ':' . $column->name ] = $model->{$column->name};
+            $columnValues[ ':' . $column->name ] = self::castToSql( $model->{$column->name}, $column->datatype );
         }
 
         $sql = 'UPDATE ' . self::getModelTable( $modelClass )
@@ -363,18 +366,27 @@ abstract class DAO extends \Erum\DAOAbstract
         if( null === $value ) return null;
 
         // prepare arrays
-        if( ']' == substr( $columnType, 1, -1 ) )
+        if( ']' == substr( $columnType, -1, 1 ) )
         {
-
+            $columnType = 'ARRAY';
         }
 
         switch( $columnType )
         {
-            case 'INT' || 'SMALLINT' || 'BIGINT':
+            case 'INT':
+            case 'SMALLINT':
+            case 'BIGINT':
+            case 'INTEGER':
                 $value = (int)$value;
                 break;
-            case 'ARRAY':
+            case 'BOOLEAN':
+            case 'BOOL':
+                $value = (bool)$value;
                 break;
+            case 'ARRAY':
+                $value = self::arr2pgarr( $value );
+                break;
+            default:
         }
 
         return $value;
@@ -404,21 +416,114 @@ abstract class DAO extends \Erum\DAOAbstract
                 $value = (bool)$value;
                 break;
             case 'ARRAY':
-                // cover strings into "
-                $value = str_ireplace( '"', '\"', $value );
 
-                $value = preg_replace( '/([^{},]+)/i', '"$1"', $value );
-
-                $value = json_decode( str_replace(
-                    array( '[',      ']',      '{', '}' ),
-                    array( '\u005B', '\u005D', '[', ']' ),
-                    $value
-                ) );
+                $value = self::pgarr2arr( $value );
                 break;
             default:
         }
 
         return $value;
+    }
+
+    // Here comes tool parts
+    // @TODO need to be relocated to database-depended location
+
+    public static function arr2pgarr( $value )
+    {
+        $parts = array();
+
+        foreach ( (array)$value as $inner)
+        {
+            if ( is_array($inner) )
+            {
+                $parts[] = self::arr2pgarr( $inner );
+            }
+            elseif ($inner === null)
+            {
+                $parts[] = 'NULL';
+            }
+            else
+            {
+                $parts[] = '"' . addcslashes($inner, "\"\\") . '"';
+            }
+        }
+
+        return '{' . join(",", (array)$parts) . '}';
+    }
+
+
+    public static function pgarr2arr($str, $start=0)
+    {
+        static $p;
+        if ($start==0) $p=0;
+        $result = array();
+
+        // Leading "{".
+        $p += strspn($str, " \t\r\n", $p);
+        $c = substr($str, $p, 1);
+
+        if ($c != '{') {
+            return;
+        }
+        $p++;
+
+        // Array may contain:
+        // - "-quoted strings
+        // - unquoted strings (before first "," or "}")
+        // - sub-arrays
+        while (1) {
+            $p += strspn($str, " \t\r\n", $p);
+            $c = substr($str, $p, 1);
+
+            // End of array.
+            if ($c == '}') {
+                $p++;
+                break;
+            }
+
+            // Next element.
+            if ($c == ',') {
+                $p++;
+                continue;
+            }
+
+            // Sub-array.
+            if ($c == '{')
+            {
+                $result[] = self::pgarr2arr($str, $p);
+                continue;
+            }
+
+            // Unquoted string.
+            if ($c != '"')
+            {
+                $len    = strcspn($str, ",}", $p);
+                $v      = stripcslashes(substr($str, $p, $len));
+
+                if (!strcasecmp($v, "null"))
+                {
+                    $result[] = null;
+                }
+                else
+                {
+                    $result[] = $v;
+                }
+                $p += $len;
+                continue;
+            }
+
+            // Quoted string.
+            $m = null;
+            if (preg_match('/" ((?' . '>[^"\\\\]+|\\\\.)*) "/Asx', $str, $m, 0, $p))
+            {
+                $result[] = stripcslashes($m[1]);
+                $p += strlen($m[0]);
+                continue;
+            }
+        }
+
+        return $result;
+
     }
     
 }
