@@ -4,6 +4,10 @@
  * SQL database module for Erum framework
  *
  * @author Andrew Tereshko <andrew.tereshko@gmail.com>
+ *
+ * @method static SqlDb factory( $configAlias = 'default' )
+ *
+ * @method \PDOStatement query()
  */
 class SqlDb extends \Erum\ModuleAbstract
 {
