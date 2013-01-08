@@ -49,15 +49,16 @@ abstract class DAO extends \Erum\DAOAbstract
 
             $model = $stmt->fetchObject( $className );
 
+        }
+        
+        if( $model instanceof $className )
+        {
             // normalize property values
             foreach( $model->tableReflection()->columns as $column )
             {
                 $model->{$column->name} = self::castFromSql( $model->{$column->name}, $column->datatype );
             }
-        }
-        
-        if( $model instanceof $className )
-        {
+
             \Erum\ModelWatcher::instance()->bind( $model );
         }
         else
@@ -138,7 +139,7 @@ abstract class DAO extends \Erum\DAOAbstract
         $list = array();
 
         reset( $ids );
-        while( list( $key, $modelId ) = each( $ids ) )
+        while( list(, $modelId ) = each( $ids ) )
         {
             $modelId = (array)$modelId;
             
@@ -149,45 +150,51 @@ abstract class DAO extends \Erum\DAOAbstract
             
             if( $model )
             {
-                $list[ implode( ':', (array)$model->id ) ] = $model;
+                $list[ $model->getId() ] = $model;
             }
         }
         
         $condition = new \Sql\Condition();
-        
-        for( $i = 0; $i < $propertiesCount; $i++ )
-        {
-            $idParts = array();
-            
-            reset( $ids );
-            while( list( , $modelId ) =each( $ids ) )
-            {
-                if( isset( $list[ implode( ':', (array)$model->id ) ] ) ) continue;
-                
-                $idParts[] = (array)$modelId[ $i ];
-            }
-            
-            $condition->where( $properties[ $i ] . ' IN ( ' . implode( ',', $idParts ) . ' ) ' );
-        }
-        unset( $idParts );
-        
-        $stmt = \SqlDb::factory()->prepare( 'SELECT * FROM ' . self::getModelTable() . $condition );
-        
-        $stmt->execute();
 
-        while ( $model = $stmt->fetchObject( self::getModelClass( true ) ) )
+        if( sizeof( $ids ) !== sizeof( $list ) )
         {
-            $list[ implode( ':', (array)$model->id ) ] = $model;
-            
-            \Erum\ModelWatcher::instance()->bind( $model );
-
-            // normalize property values
-            foreach( $model->tableReflection()->columns as $column )
+            for( $i = 0; $i < $propertiesCount; $i++ )
             {
-                $model->{$column->name} = self::castFromSql( $model->{$column->name}, $column->datatype );
+                $idParts = array();
+
+                reset( $ids );
+                while( list( , $modelId ) = each( $ids ) )
+                {
+                    if( isset( $list[ implode( ':',(array)$modelId ) ] ) ) continue;
+
+                    $idParts[] = $modelId[ $i ];
+                }
+
+                if( !empty( $idParts ) )
+                {
+                    $condition->where( $properties[ $i ] . ' IN ( ' . implode( ',', $idParts ) . ' ) ' );
+                }
+            }
+            unset( $idParts );
+
+            $stmt = \SqlDb::factory()->prepare( 'SELECT * FROM ' . self::getModelTable() . ' ' . $condition );
+
+            $stmt->execute();
+
+            while ( $model = $stmt->fetchObject( self::getModelClass( true ) ) )
+            {
+                $list[ implode( ':', (array)$model->id ) ] = $model;
+
+                \Erum\ModelWatcher::instance()->bind( $model );
+
+                // normalize property values
+                foreach( $model->tableReflection()->columns as $column )
+                {
+                    $model->{$column->name} = self::castFromSql( $model->{$column->name}, $column->datatype );
+                }
             }
         }
-        
+
         return $list;
     }
     
@@ -213,7 +220,7 @@ abstract class DAO extends \Erum\DAOAbstract
     {
         \Erum\ModelWatcher::instance()->unbind( get_class( $model ), $model->getId() );
         
-        $stmt = \SqlDb::factory()->prepare( 'DELETE FROM ' . self::getModelTable() . ' WHERE id = :id LIMIT 1' );
+        $stmt = \SqlDb::factory()->prepare( 'DELETE FROM ' . self::getModelTable() . ' WHERE id = :id' );
         
         $stmt->execute( array( ':id' => (int) $model->id ) );
 
@@ -224,11 +231,11 @@ abstract class DAO extends \Erum\DAOAbstract
     {
         if( self::isNew( $model ) )
         {
-            self::insert( $model );
+            static::insert( $model );
         }
         else
         {
-            self::update( $model );
+            static::update( $model );
         }
     }
 
@@ -243,7 +250,7 @@ abstract class DAO extends \Erum\DAOAbstract
             /* @var $column \Sql\Reflection\Column */
 
             // skip serial
-            if( $column->datatype == 'SERIAL' ) continue;
+            if( $column->datatype == 'SERIAL' && null === $model->{ $column->name } ) continue;
 
             $columnNames[] = $column->name;
 
@@ -386,6 +393,30 @@ abstract class DAO extends \Erum\DAOAbstract
             case 'ARRAY':
                 $value = self::arr2pgarr( $value );
                 break;
+            case 'TIME':
+                // 04:05:06
+                if( !($value instanceof \DateTime ) )
+                {
+                    $value = new \DateTime( $value );
+                }
+
+                $value = $value->format( 'H:i:sO' );
+                break;
+            case 'NUMRANGE':
+            case 'INT8RANGE':
+            case 'INT4RANGE':
+                $value = (array)$value;
+
+                if( !empty( $value ) )
+                {
+                    $value = '[' . $value[0] . ',' . $value[ sizeof($value) - 1 ] . ']';
+                }
+                else
+                {
+                    $value = null;
+                }
+
+                break;
             default:
         }
 
@@ -416,8 +447,23 @@ abstract class DAO extends \Erum\DAOAbstract
                 $value = (bool)$value;
                 break;
             case 'ARRAY':
-
                 $value = self::pgarr2arr( $value );
+                break;
+            case 'TIME':
+                // 04:05:06
+                $value = new \DateTime( $value );
+                break;
+            // support only integer ranges for now
+            //case 'NUMRANGE':
+            //case 'INT8RANGE':
+            case 'INT4RANGE':
+                // remove inclusive bounds
+                $value = explode( ',', trim( $value, '[]') );
+
+                // test tor exclusive bounds
+                $value[0] = $value[0]{0} == '(' ? $value[0] == (int)$value[0] + 1 : (int)$value[0];
+                $value[1] = substr( $value[1], -1 ) == ')' ? (int)$value[1] - 1 : (int)$value[1];
+
                 break;
             default:
         }
