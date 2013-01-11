@@ -250,7 +250,7 @@ abstract class DAO extends \Erum\DAOAbstract
             /* @var $column \Sql\Reflection\Column */
 
             // skip serial
-            if( $column->datatype == 'SERIAL' && null === $model->{ $column->name } ) continue;
+            if( $column->datatype == 'SERIAL' && null == $model->{ $column->name } ) continue;
 
             $columnNames[] = $column->name;
 
