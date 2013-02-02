@@ -6,6 +6,8 @@ namespace SqlDb;
  * 
  * @author Andrew Tereshko <andrew.tereshko@gmail.com>
  */
+use Erum\ModelWatcher;
+
 abstract class DAO extends \Erum\DAOAbstract
 {
     /**
@@ -92,16 +94,22 @@ abstract class DAO extends \Erum\DAOAbstract
         
         $stmt->execute();
 
-        $list = array( );
+        $list           = array( );
+        $tableColumns   = array();
 
-        while ( $model = $stmt->fetchObject( $className ) )
+        while ( $modelData = $stmt->fetch( \PDO::FETCH_ASSOC ) )
         {
-            $list[ implode( ':', (array)$model->id ) ] = $model;
+            $model = new $className;
 
-            // normalize property values
+            if( !isset( $tableColumns ) )
+            {
+                $tableColumns = $model->tableReflection()->columns;
+            }
+
+            // normalize && set property values
             foreach( $model->tableReflection()->columns as $column )
             {
-                $model->{$column->name} = self::castFromSql( $model->{$column->name}, $column->datatype );
+                $model->{$column->name} = self::castFromSql( $modelData[ $column->name ], $column->datatype );
             }
 
             $oldModel = \Erum\ModelWatcher::instance()->get( $className, $model->id );
@@ -110,11 +118,11 @@ abstract class DAO extends \Erum\DAOAbstract
             {
                 unset( $oldModel );
             }
-            else
-            {
-                \Erum\ModelWatcher::instance()->bind( $model );
-            }
-            
+
+            \Erum\ModelWatcher::instance()->bind( $model );
+
+            $list[ implode( ':', (array)$model->id ) ] = $model;
+
         }
 
         return $list;
@@ -181,17 +189,27 @@ abstract class DAO extends \Erum\DAOAbstract
 
             $stmt->execute();
 
-            while ( $model = $stmt->fetchObject( self::getModelClass( true ) ) )
+            $className      = self::getModelClass();
+            $tableColumns   = array();
+
+            while ( $modelData = $stmt->fetch( \PDO::FETCH_ASSOC ) )
             {
+                $model = new $className;
+
+                if( !isset( $tableColumns ) )
+                {
+                    $tableColumns = $model->tableReflection()->columns;
+                }
+
+                // set && normalize property values
+                foreach( $tableColumns as $column )
+                {
+                    $model->{$column->name} = self::castFromSql( $modelData[ $column->name ], $column->datatype );
+                }
+
                 $list[ implode( ':', (array)$model->id ) ] = $model;
 
                 \Erum\ModelWatcher::instance()->bind( $model );
-
-                // normalize property values
-                foreach( $model->tableReflection()->columns as $column )
-                {
-                    $model->{$column->name} = self::castFromSql( $model->{$column->name}, $column->datatype );
-                }
             }
         }
 
@@ -262,7 +280,7 @@ abstract class DAO extends \Erum\DAOAbstract
             . ') VALUES (' . \implode( ',', array_keys( $columnValues ) )
             . ') RETURNING ' . \implode( ',', (array)$modelClass::identityProperty() ) . ';';
 
-        echo $sql;
+        //echo $sql;
 
         $stmt = \SqlDb::factory()->prepare( $sql );
 
@@ -309,6 +327,9 @@ abstract class DAO extends \Erum\DAOAbstract
         $stmt = \SqlDb::factory()->prepare( $sql );
 
         $stmt->execute( $columnValues );
+
+
+
     }
 
     /**
@@ -393,6 +414,12 @@ abstract class DAO extends \Erum\DAOAbstract
             case 'ARRAY':
                 $value = self::arr2pgarr( $value );
                 break;
+            case 'POINT':
+                $value =  implode(',', (array)$value );
+                break;
+            case 'JSON':
+                $value = null === $value ? null : json_encode( $value );
+                break;
             case 'TIME':
                 // 04:05:06
                 if( !($value instanceof \DateTime ) )
@@ -448,6 +475,12 @@ abstract class DAO extends \Erum\DAOAbstract
                 break;
             case 'ARRAY':
                 $value = self::pgarr2arr( $value );
+                break;
+            case 'POINT':
+                $value = array_map( 'floatval', explode( ',', trim( $value, ' ()') ) );
+                break;
+            case 'JSON':
+                $value = null === $value ? null : json_decode( $value, true );
                 break;
             case 'TIME':
                 // 04:05:06

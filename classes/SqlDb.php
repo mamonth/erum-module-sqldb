@@ -53,3 +53,4 @@ class SqlDb extends \Erum\ModuleAbstract
         return $this->driver->prepare( $statement, $driver_options );
     }
 }
+
