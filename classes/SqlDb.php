@@ -19,11 +19,11 @@ class SqlDb extends \Erum\ModuleAbstract
 
     public function __construct( array $config )
     {
-        $this->driver = new \PDO(
-                    $config['type'] . ':host=' . $config['host'] . ';dbname=' . $config['name'],
-                    $config['user'],
-                    $config['password']
-            );
+        $dsn = $config['type'] . ':host=' . $config['host'] . ';dbname=' . $config['name'];
+
+        if( isset( $config['port'] ) ) $dsn .= ';port=' . $config['port'];
+
+        $this->driver = new \PDO( $dsn, $config['user'], $config['password'] );
 
         $this->driver->setAttribute( \PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION );
     }
