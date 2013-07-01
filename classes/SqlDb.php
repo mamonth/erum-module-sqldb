@@ -15,6 +15,11 @@ class SqlDb extends \Erum\ModuleAbstract
      *
      * @var \PDO
      */
+    private $pdo;
+
+    /**
+     * @var \SqlDb\DriverInterface
+     */
     private $driver;
 
     public function __construct( array $config )
@@ -23,14 +28,14 @@ class SqlDb extends \Erum\ModuleAbstract
 
         if( isset( $config['port'] ) ) $dsn .= ';port=' . $config['port'];
 
-        $this->driver = new \PDO( $dsn, $config['user'], $config['password'] );
+        $this->pdo = new \PDO( $dsn, $config['user'], $config['password'] );
 
-        $this->driver->setAttribute( \PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION );
+        $this->pdo->setAttribute( \PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION );
     }
 
     public function __call( $method, $options )
     {
-        return call_user_func_array( array( $this->driver, $method ), $options );
+        return call_user_func_array( array( $this->pdo, $method ), $options );
     }
 
     public static function sqlTimeFromUnix( $timestamp )
@@ -45,12 +50,17 @@ class SqlDb extends \Erum\ModuleAbstract
 
     /**
      * here extends PDO methods - to avoid __call
-     * @todo - realize moduleInterface to avoid crunches
+     *
+     * @todo - realize moduleInterface to avoid crunches like above
+     *
+     * @param       $statement
+     * @param array $driver_options
+     *
+     * @return \PDOStatement
      */
-
     public function prepare( $statement ,array $driver_options = array() )
     {
-        return $this->driver->prepare( $statement, $driver_options );
+        return $this->pdo->prepare( $statement, $driver_options );
     }
 }
 

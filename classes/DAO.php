@@ -6,7 +6,8 @@ namespace SqlDb;
  * 
  * @author Andrew Tereshko <andrew.tereshko@gmail.com>
  */
-use Erum\ModelWatcher;
+use \Erum\ModelWatcher,
+    \Erum\ModelAbstract;
 
 abstract class DAO extends \Erum\DAOAbstract
 {
@@ -14,6 +15,7 @@ abstract class DAO extends \Erum\DAOAbstract
      * Gets single model data by Id.
      *
      * @param mixed $modelId
+     * @throws Exception
      * @return ModelAbstract
      */
     public static function get( $modelId )
@@ -29,7 +31,7 @@ abstract class DAO extends \Erum\DAOAbstract
         if ( sizeof( $properties ) != sizeof( $modelId ) )
             throw new Exception( 'Model identity properties count do not equal count of values given.' );
 
-        $model = \Erum\ModelWatcher::instance()->get( $className, $modelId );
+        $model = ModelWatcher::instance()->get( $className, $modelId );
 
         if ( null === $model )
         {
@@ -51,26 +53,25 @@ abstract class DAO extends \Erum\DAOAbstract
 
             $model = $stmt->fetchObject( $className );
 
-        }
-        
-        if( $model instanceof $className )
-        {
-            // normalize property values
-            foreach( $model->tableReflection()->columns as $column )
+            if( $model instanceof $className )
             {
-                $model->{$column->name} = self::castFromSql( $model->{$column->name}, $column->datatype );
-            }
+                // normalize property values
+                foreach( $model->tableReflection()->columns as $column )
+                {
+                    $model->{$column->name} = self::castFromSql( $model->{$column->name}, $column->datatype );
+                }
 
-            \Erum\ModelWatcher::instance()->bind( $model );
-        }
-        else
-        {
-            $model = null;
+                ModelWatcher::instance()->bind( $model );
+            }
+            else
+            {
+                $model = null;
+            }
         }
 
         return $model;
     }
-    
+
     /**
      * Gets models list by ?
      *
@@ -112,14 +113,14 @@ abstract class DAO extends \Erum\DAOAbstract
                 $model->{$column->name} = self::castFromSql( $modelData[ $column->name ], $column->datatype );
             }
 
-            $oldModel = \Erum\ModelWatcher::instance()->get( $className, $model->id );
+            $oldModel = ModelWatcher::instance()->get( $className, $model->id );
             
             if( $oldModel )
             {
                 unset( $oldModel );
             }
 
-            \Erum\ModelWatcher::instance()->bind( $model );
+            ModelWatcher::instance()->bind( $model );
 
             $list[ implode( ':', (array)$model->id ) ] = $model;
 
@@ -127,11 +128,14 @@ abstract class DAO extends \Erum\DAOAbstract
 
         return $list;
     }
-    
+
     /**
      * Gets models list by ids
      *
-     * @param mixed $condition
+     * @param array $ids
+     *
+     * @throws Exception
+     * @internal param mixed $condition
      * @return array
      */
     public static function getListByIds( array $ids )
@@ -144,24 +148,26 @@ abstract class DAO extends \Erum\DAOAbstract
         
         $propertiesCount = sizeof( $properties );
         
-        $list = array();
+        $list       = array();
+        $sortIds    = array();
 
-        reset( $ids );
-        while( list(, $modelId ) = each( $ids ) )
+        foreach( $ids as &$modelId )
         {
-            $modelId = (array)$modelId;
-            
+            $modelId = is_array( $modelId ) ? $modelId : array( $modelId );
+
             if( sizeof( $modelId ) != $propertiesCount )
                 throw new Exception( 'Model identity properties count do not equal count of values given.' );
-            
-            $model = \Erum\ModelWatcher::instance()->get( $className, $modelId );
-            
+
+            $model = ModelWatcher::instance()->get( $className, $modelId );
+
             if( $model )
             {
                 $list[ $model->getId() ] = $model;
             }
+
+            $sortIds[] = is_array( $modelId ) ? implode(':', $modelId) : $modelId;
         }
-        
+
         $condition = new \Sql\Condition();
 
         if( sizeof( $ids ) !== sizeof( $list ) )
@@ -170,10 +176,9 @@ abstract class DAO extends \Erum\DAOAbstract
             {
                 $idParts = array();
 
-                reset( $ids );
-                while( list( , $modelId ) = each( $ids ) )
+                foreach( $ids as &$modelId )
                 {
-                    if( isset( $list[ implode( ':',(array)$modelId ) ] ) ) continue;
+                    if( isset( $list[ implode( ':', is_array( $modelId ) ? $modelId : array( $modelId ) ) ] ) ) continue;
 
                     $idParts[] = $modelId[ $i ];
                 }
@@ -190,13 +195,13 @@ abstract class DAO extends \Erum\DAOAbstract
             $stmt->execute();
 
             $className      = self::getModelClass();
-            $tableColumns   = array();
+            $tableColumns   = null;
 
             while ( $modelData = $stmt->fetch( \PDO::FETCH_ASSOC ) )
             {
                 $model = new $className;
 
-                if( !isset( $tableColumns ) )
+                if( null === $tableColumns )
                 {
                     $tableColumns = $model->tableReflection()->columns;
                 }
@@ -207,10 +212,13 @@ abstract class DAO extends \Erum\DAOAbstract
                     $model->{$column->name} = self::castFromSql( $modelData[ $column->name ], $column->datatype );
                 }
 
-                $list[ implode( ':', (array)$model->id ) ] = $model;
+                $list[ implode( ':', is_array( $model->id ) ? $model->id : array( $model->id ) ) ] = $model;
 
-                \Erum\ModelWatcher::instance()->bind( $model );
+                ModelWatcher::instance()->bind( $model );
             }
+
+            // sort with initial ids order
+            $list = \Erum\Arr::ksortByArray( $list, $sortIds );
         }
 
         return $list;
@@ -220,23 +228,32 @@ abstract class DAO extends \Erum\DAOAbstract
      * Get model count in storage
      * 
      * @param bool | string | \Sql\Condition $condition
+     * @return integer
      */
     public static function getCount( $condition = false )
-    {        
+    {
+        if ( $condition instanceof \Sql\Condition )
+        {
+            $condition = clone $condition;
+
+            $condition->dropOrder();
+        }
+
         $stmt = \SqlDb::factory()->query( 'SELECT COUNT(*) FROM ' . self::getModelTable() . ' ' . ( $condition ? $condition : '' ) );
         
-        return $stmt->fetchColumn();
+        return (int)$stmt->fetchColumn();
     }
-    
+
     /**
      * Delete model data from storage by model Id.
      *
      * @param ModelAbstract $model
+     *
      * @return boolean
      */
-    public static function delete( \Erum\ModelAbstract $model )
+    public static function delete( ModelAbstract $model )
     {
-        \Erum\ModelWatcher::instance()->unbind( get_class( $model ), $model->getId() );
+        ModelWatcher::instance()->unbind( get_class( $model ), $model->getId() );
         
         $stmt = \SqlDb::factory()->prepare( 'DELETE FROM ' . self::getModelTable() . ' WHERE id = :id' );
         
@@ -245,19 +262,28 @@ abstract class DAO extends \Erum\DAOAbstract
         return $stmt->rowCount() ? true : false;
     }
 
-    public static function save( \Erum\ModelAbstract $model )
+    /**
+     * @param ModelAbstract $model
+     *
+     * @return boolean
+     */
+    public static function save( ModelAbstract $model )
     {
         if( self::isNew( $model ) )
         {
-            static::insert( $model );
+            return static::insert( $model );
         }
         else
         {
-            static::update( $model );
+            return static::update( $model );
         }
     }
 
-    public static function insert( \Erum\ModelAbstract $model )
+    /**
+     * @param ModelAbstract $model
+     * @return bool
+     */
+    public static function insert( ModelAbstract $model )
     {
         $columnNames    = array();
         $columnValues   = array();
@@ -296,7 +322,12 @@ abstract class DAO extends \Erum\DAOAbstract
         return true;
     }
 
-    public static function update( \Erum\ModelAbstract $model )
+    /**
+     * @param ModelAbstract $model
+     *
+     * @return bool
+     */
+    public static function update( ModelAbstract $model )
     {
         $columnSets     = array();
         $columnValues   = array();
@@ -329,16 +360,16 @@ abstract class DAO extends \Erum\DAOAbstract
         $stmt->execute( $columnValues );
 
 
-
+        return true;
     }
 
     /**
      * Find out - is model new (need insert) or existed (need update)
      *
-     * @param \Erum\ModelAbstract $model
+     * @param ModelAbstract $model
      * @return bool
      */
-    public static function isNew( \Erum\ModelAbstract $model )
+    public static function isNew( ModelAbstract $model )
     {
         if( $model->getId() )
         {
@@ -363,9 +394,10 @@ abstract class DAO extends \Erum\DAOAbstract
 
     /**
      * Get's model table
-     * 
+     *
      * @param string $className
-     * @return string 
+     * @throws \Exception
+     * @return string
      */
     public static function getModelTable( $className = null )
     {
@@ -389,6 +421,13 @@ abstract class DAO extends \Erum\DAOAbstract
         return $table;
     }
 
+    /**
+     * @TODO refactor
+     *
+     * @param $value
+     * @param string $columnType
+     * @return int|null|string
+     */
     public static function castToSql( $value, $columnType = 'VARCHAR' )
     {
         if( null === $value ) return null;
@@ -401,6 +440,11 @@ abstract class DAO extends \Erum\DAOAbstract
 
         switch( $columnType )
         {
+            case 'VARCHAR':
+            case 'TEXT':
+                $value = (string)$value;
+                if( !strlen( $value ) ) $value = null;
+                break;
             case 'INT':
             case 'SMALLINT':
             case 'BIGINT':
@@ -409,7 +453,7 @@ abstract class DAO extends \Erum\DAOAbstract
                 break;
             case 'BOOLEAN':
             case 'BOOL':
-                $value = (bool)$value;
+                $value = (bool)$value ? 'TRUE': 'FALSE';
                 break;
             case 'ARRAY':
                 $value = self::arr2pgarr( $value );
@@ -428,6 +472,16 @@ abstract class DAO extends \Erum\DAOAbstract
                 }
 
                 $value = $value->format( 'H:i:sO' );
+                break;
+            case 'TIMESTAMP':
+            case 'TIMESTAMPTZ':
+                // 2004-10-19 10:23:54
+                if( !($value instanceof \DateTime ) )
+                {
+                    $value = new \DateTime( $value );
+                }
+
+                $value = $value->format( \DateTime::ISO8601 );
                 break;
             case 'NUMRANGE':
             case 'INT8RANGE':
@@ -450,6 +504,13 @@ abstract class DAO extends \Erum\DAOAbstract
         return $value;
     }
 
+    /**
+     * @TODO refactor
+     *
+     * @param $value
+     * @param string $columnType
+     * @return array|bool|\DateTime|int|mixed|null
+     */
     public static function castFromSql( $value, $columnType = 'VARCHAR' )
     {
         if( null === $value ) return null;
@@ -520,6 +581,10 @@ abstract class DAO extends \Erum\DAOAbstract
             elseif ($inner === null)
             {
                 $parts[] = 'NULL';
+            }
+            elseif( is_numeric( $inner ) )
+            {
+                $parts[] = (float)$inner;
             }
             else
             {
