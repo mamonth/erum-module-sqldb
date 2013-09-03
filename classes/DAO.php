@@ -118,6 +118,7 @@ abstract class DAO extends \Erum\DAOAbstract
             if( $oldModel )
             {
                 unset( $oldModel );
+                ModelWatcher::instance()->unbind( $className, $model->id );
             }
 
             ModelWatcher::instance()->bind( $model );
