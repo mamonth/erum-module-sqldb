@@ -583,7 +583,8 @@ abstract class DAO extends \Erum\DAOAbstract
             {
                 $parts[] = 'NULL';
             }
-            elseif( is_numeric( $inner ) )
+            // for unknown reasons '+' at string start not cause string detection
+            elseif( is_numeric( $inner ) && substr( $inner, 0, 1 ) !== '+' )
             {
                 $parts[] = (float)$inner;
             }
