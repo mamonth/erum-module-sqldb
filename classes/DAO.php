@@ -460,7 +460,7 @@ abstract class DAO extends \Erum\DAOAbstract
                 $value = self::arr2pgarr( $value );
                 break;
             case 'POINT':
-                $value =  implode(',', (array)$value );
+                $value = implode(',', (array)$value );
                 break;
             case 'JSON':
                 $value = null === $value ? null : json_encode( $value );
@@ -498,6 +498,16 @@ abstract class DAO extends \Erum\DAOAbstract
                     $value = null;
                 }
 
+                break;
+            case 'GEOMETRY':
+            case 'GEOM':
+                // convert to binary from geoPHP object
+                if( class_exists('geoPHP') && $value instanceof \Geometry )
+                {
+                    $unpack = unpack( 'H*', $value->out('ewkb') );
+                    $value  = $unpack[1];
+                    unset( $unpack );
+                }
                 break;
             default:
         }
@@ -559,6 +569,15 @@ abstract class DAO extends \Erum\DAOAbstract
                 $value[0] = $value[0]{0} == '(' ? $value[0] == (int)$value[0] + 1 : (int)$value[0];
                 $value[1] = substr( $value[1], -1 ) == ')' ? (int)$value[1] - 1 : (int)$value[1];
 
+                break;
+            case 'GEOMETRY':
+            case 'GEOM':
+                // convert to geoPHp from binary if lib available
+                if( class_exists('geoPHP') )
+                {
+                    $wkb    = pack('H*', $value);
+                    $value  = \geoPHP::load( $wkb, 'ewkb' );
+                }
                 break;
             default:
         }
