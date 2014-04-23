@@ -58,9 +58,14 @@ class SqlDb extends \Erum\ModuleAbstract
      *
      * @return \PDOStatement
      */
-    public function prepare( $statement ,array $driver_options = array() )
+    public function prepare( $statement, array $driver_options = array() )
     {
         return $this->pdo->prepare( $statement, $driver_options );
+    }
+
+    public function escape( $text )
+    {
+        return str_ireplace( array( '$$' ), array( '\$\$' ), $text );
     }
 }
 
