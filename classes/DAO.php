@@ -6,6 +6,7 @@ namespace SqlDb;
  * 
  * @author Andrew Tereshko <andrew.tereshko@gmail.com>
  */
+
 use \Erum\ModelWatcher,
     \Erum\ModelAbstract;
 
@@ -281,6 +282,22 @@ abstract class DAO extends \Erum\DAOAbstract
     }
 
     /**
+     * Save model collection
+     *
+     * @param ModelAbstract[] $modelList
+     */
+    public static function saveList( array $modelList )
+    {
+        $listInsert = array();
+        $listUpdate = array();
+
+        foreach( $modelList as &$model )
+        {
+            array_push( self::isNew( $model ) ? $listInsert : $listUpdate, $model );
+        }
+    }
+
+    /**
      * @param ModelAbstract $model
      * @return bool
      */
@@ -324,6 +341,107 @@ abstract class DAO extends \Erum\DAOAbstract
     }
 
     /**
+     * @param ModelAbstract[] $modelList
+     * @throws \Erum\Exception
+     * @return bool
+     */
+    public static function insertList( array $modelList )
+    {
+        if( empty( $modelList ) ) return 0;
+
+        // if somehow we need to save that huge list - split it
+        if( count( $modelList ) > 1000 )
+        {
+            $inserted   = 0;
+            $iterate    = ceil( count( $modelList ) / 1000 );
+
+            for( $i = 0; $i < $iterate; $i++ )
+            {
+                $inserted += static::insertList( array_slice( $modelList, $i * 1000, 1000 ) );
+            }
+
+            return $inserted;
+        }
+
+        $modelClass     = self::getModelClass();
+        $dummyModel     = new $modelClass; // @TODO really ?!! That bad ?
+        $columnList     = array();
+        $columnValues   = array();
+        $insertList     = array();
+
+        foreach( $dummyModel->tableReflection()->columns as $column )
+        {
+            /* @var $column \Sql\Reflection\Column */
+
+            $columnList[ $column->name ] = $column->datatype;
+        }
+
+        foreach( $modelList as &$model )
+        {
+            if( !($model instanceof $modelClass) ) throw new Exception('All models in collection must be single class instance.');
+
+            $insertString = '';
+
+            foreach( $columnList as $colName => $colType )
+            {
+                /* @var $column \Sql\Reflection\Column */
+
+                // skip serial
+                if( preg_match( '/^SERIAL[0-9]*$/i', $colType ) && null == $model->{$colName} )
+                {
+                    $insertString .= 'DEFAULT';
+                }
+                else
+                {
+                    $placeholder = ':' . $colName . count( $insertList );
+
+                    $insertString .= $placeholder;
+
+                    $columnValues[ $placeholder ] = self::castToSql( $model->{$colName}, $colType );
+                }
+
+                $insertString .= ',';
+            }
+
+            $insertList[] = '(' . trim( $insertString, ',' ) . ')';
+        }
+
+        $sql = 'INSERT INTO ' . self::getModelTable( $modelClass )
+            . '(' . \implode( ',', array_keys( $columnList ) )
+            . ') VALUES ' . \implode( ',', $insertList ) . '  '
+            . 'RETURNING ' . \implode( ',', (array)$modelClass::identityProperty() ) . ';';
+
+        $stmt = \SqlDb::factory()->prepare( $sql );
+
+        $stmt->execute( $columnValues );
+
+        $result = $stmt->fetch( \PDO::FETCH_ASSOC );
+
+        foreach( $result as $column => $value )
+        {
+            $model->$column = $value;
+        }
+
+        return $stmt->rowCount();
+    }
+
+
+    /**
+     * @param ModelAbstract[] $modelList
+     * @throws \Erum\Exception
+     * @return bool
+     */
+    public static function updateList( array $modelList )
+    {
+        if( empty( $modelList ) ) return 0;
+
+        foreach( $modelList as &$model ) static::update( $model );
+
+        return count( $modelList );
+    }
+
+
+    /**
      * @param ModelAbstract $model
      *
      * @return bool
@@ -359,7 +477,6 @@ abstract class DAO extends \Erum\DAOAbstract
         $stmt = \SqlDb::factory()->prepare( $sql );
 
         $stmt->execute( $columnValues );
-
 
         return true;
     }
@@ -555,8 +672,12 @@ abstract class DAO extends \Erum\DAOAbstract
                 $value = null === $value ? null : json_decode( $value, true );
                 break;
             case 'TIME':
+            case 'TIMESTAMPTZ':
                 // 04:05:06
                 $value = new \DateTime( $value );
+                break;
+            case 'TIMESTAMP':
+                $value = new \DateTime( $value, new \DateTimeZone('UTC') );
                 break;
             // support only integer ranges for now
             //case 'NUMRANGE':
