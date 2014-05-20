@@ -251,15 +251,31 @@ abstract class DAO extends \Erum\DAOAbstract
      *
      * @param ModelAbstract $model
      *
+     * @throws \Exception
      * @return boolean
      */
     public static function delete( ModelAbstract $model )
     {
-        ModelWatcher::instance()->unbind( get_class( $model ), $model->getId() );
+        $modelClass     = get_class( $model );
+        $keyConditions  = array();
+        $keyValues      = array();
+
+        ModelWatcher::instance()->unbind( $modelClass, $model->getId() );
+
+        foreach( (array)$modelClass::identityProperty() as $column )
+        {
+            $keyConditions[ $column ]   = $column . ' = :' . $column;
+            $keyValues[ ':' . $column ] = $model->$column;
+
+            if( empty( $model->$column ) ) throw new \Exception('Can not delete model with empty identity value');
+        }
+
+        if( empty( $keyConditions ) ) throw new \Exception('Can not delete model without identity columns');
+
+        $query  = 'DELETE FROM ' . self::getModelTable() . ' WHERE ' . implode( ' AND ', $keyConditions );
+        $stmt   = \SqlDb::factory()->prepare( $query );
         
-        $stmt = \SqlDb::factory()->prepare( 'DELETE FROM ' . self::getModelTable() . ' WHERE id = :id' );
-        
-        $stmt->execute( array( ':id' => (int) $model->id ) );
+        $stmt->execute( $keyValues );
 
         return $stmt->rowCount() ? true : false;
     }
